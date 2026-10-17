@@ -2,7 +2,7 @@
 
 ## As a systemd user service
 
-    pipx install git+https://github.com/ztaylor/lonoboard
+    pipx install lonoboard
     lonoboard install --now
 
 This writes `~/.config/systemd/user/lonoboard.service`, which runs `lonoboard serve`, then enables and

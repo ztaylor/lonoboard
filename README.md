@@ -12,7 +12,7 @@ ACiD and iCE drew it.
     telnet gpu-box 2323           # any terminal; SyncTERM or NetRunner for the full effect
     http://gpu-box:7777/          # the same board in a browser
 
-![lonoboard: the main screen, the services lightbar and a chat](docs/media/hero.gif)
+![lonoboard: the main screen, the services lightbar and a chat](https://raw.githubusercontent.com/ztaylor/lonoboard/main/docs/media/hero.gif)
 
 It works with llama.cpp, Ollama, vLLM and any OpenAI-compatible server. It finds them on its
 own, and you can also list them in a config file. It runs on NVIDIA, AMD, Apple Silicon or a
@@ -20,22 +20,22 @@ plain CPU. It's a single Python program with no dependencies.
 
 ## Try it
 
-    pipx install git+https://github.com/ztaylor/lonoboard
+    pipx install lonoboard
     lonoboard demo            # a simulated machine, with a fake chat
     lonoboard check           # what lonoboard finds on this machine
     lonoboard                 # the real board, on localhost
 
-Or try it without installing: `uvx --from git+https://github.com/ztaylor/lonoboard lonoboard demo`.
+Or try it without installing: `uvx lonoboard demo`.
 
 Python 3.11 or newer. Then open <http://localhost:7777/> or run `telnet localhost 2323`.
 
 <table>
-<tr><td><img src="docs/media/main.png" alt="The main screen"></td>
-<td><img src="docs/media/services.png" alt="Services, with live details"></td></tr>
-<tr><td><img src="docs/media/chat.png" alt="Chatting with a model"></td>
-<td><img src="docs/media/usage.png" alt="Requests per hour and the top 10"></td></tr>
-<tr><td><img src="docs/media/fleet.png" alt="Viewing another machine in the fleet"></td>
-<td><img src="docs/media/amber.png" alt="Amber monochrome"></td></tr>
+<tr><td><img src="https://raw.githubusercontent.com/ztaylor/lonoboard/main/docs/media/main.png" alt="The main screen"></td>
+<td><img src="https://raw.githubusercontent.com/ztaylor/lonoboard/main/docs/media/services.png" alt="Services, with live details"></td></tr>
+<tr><td><img src="https://raw.githubusercontent.com/ztaylor/lonoboard/main/docs/media/chat.png" alt="Chatting with a model"></td>
+<td><img src="https://raw.githubusercontent.com/ztaylor/lonoboard/main/docs/media/usage.png" alt="Requests per hour and the top 10"></td></tr>
+<tr><td><img src="https://raw.githubusercontent.com/ztaylor/lonoboard/main/docs/media/fleet.png" alt="Viewing another machine in the fleet"></td>
+<td><img src="https://raw.githubusercontent.com/ztaylor/lonoboard/main/docs/media/amber.png" alt="Amber monochrome"></td></tr>
 </table>
 
 ## The board
@@ -87,7 +87,7 @@ Colour depth is chosen separately:
 | `*-256color` | the nearest xterm-256 colours |
 | everything else | the terminal's own 16 colours |
 
-<img src="docs/media/terminal.png" width="560" alt="The board in a classic 80x25 terminal">
+<img src="https://raw.githubusercontent.com/ztaylor/lonoboard/main/docs/media/terminal.png" width="560" alt="The board in a classic 80x25 terminal">
 
 In a telnet session, press `d` and then `m` to cycle the colour mode, or `u` to switch between
 UTF-8 and CP437.
@@ -102,7 +102,7 @@ UTF-8 and CP437.
 | OpenAI-compatible (LM Studio, …) | port or config | models, health, chat; optional API key |
 
 lonoboard finds the systemd unit or Docker container behind each server. That gives it state,
-uptime, restarts and logs. See [docs/sources.md](docs/sources.md) for details.
+uptime, restarts and logs. See [docs/sources.md](https://github.com/ztaylor/lonoboard/blob/main/docs/sources.md) for details.
 
 **Hardware:**
 - **NVIDIA** via `nvidia-smi`, including unified-memory systems like the DGX Spark.
@@ -122,10 +122,10 @@ The board listens on **localhost only** until you say otherwise. To reach it fro
   tailnet without one. The password is asked for at a login prompt in the terminal, and the
   API takes it as a bearer token.
 
-[SECURITY.md](SECURITY.md) covers what the board shows and how it's protected.
+[SECURITY.md](https://github.com/ztaylor/lonoboard/blob/main/SECURITY.md) covers what the board shows and how it's protected.
 
-See [docs/deployment.md](docs/deployment.md) for systemd, Tailscale, Docker and deploying to
-several machines over SSH, and [docs/public-demo.md](docs/public-demo.md) for hosting a public
+See [docs/deployment.md](https://github.com/ztaylor/lonoboard/blob/main/docs/deployment.md) for systemd, Tailscale, Docker and deploying to
+several machines over SSH, and [docs/public-demo.md](https://github.com/ztaylor/lonoboard/blob/main/docs/public-demo.md) for hosting a public
 demo board.
 
 ## Configuration
@@ -143,8 +143,8 @@ url = "http://127.0.0.1:1234"
 kind = "openai"
 ```
 
-[examples/config.toml](examples/config.toml) lists every setting, and
-[docs/configuration.md](docs/configuration.md) explains them.
+[examples/config.toml](https://github.com/ztaylor/lonoboard/blob/main/examples/config.toml) lists every setting, and
+[docs/configuration.md](https://github.com/ztaylor/lonoboard/blob/main/docs/configuration.md) explains them.
 
 ## JSON API
 
@@ -153,7 +153,7 @@ Anything that doesn't ask for HTML gets JSON:
     curl localhost:7777/              # host, services, other ports, fleet
     curl localhost:7777/api/usage     # requests per hour, top 10
 
-See [docs/api.md](docs/api.md) for every endpoint.
+See [docs/api.md](https://github.com/ztaylor/lonoboard/blob/main/docs/api.md) for every endpoint.
 
 ## Credits
 
@@ -165,4 +165,4 @@ See [docs/api.md](docs/api.md) for every endpoint.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The bundled fonts keep their CC BY-SA 4.0 license.
+MIT, see [LICENSE](https://github.com/ztaylor/lonoboard/blob/main/LICENSE). The bundled fonts keep their CC BY-SA 4.0 license.
