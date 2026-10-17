@@ -1,0 +1,55 @@
+# lonoboard configuration - every setting is optional; these are the defaults.
+# Put it at ~/.config/lonoboard/config.toml (or point $LONOBOARD_CONFIG / --config at it).
+
+[board]
+name = ""                 # the logo; defaults to this machine's hostname
+tagline = ""              # an extra label for the header, e.g. "dgx spark" or "the attic box"
+listen = "127.0.0.1"      # where the board (web, API, telnet) listens
+port = 7777               # web board + JSON API
+telnet_port = 2323        # 0 turns telnet off
+password = ""             # or $LONOBOARD_PASSWORD. required to listen beyond localhost / your tailnet
+allow_anonymous = false   # listen on the network without a password (e.g. a public demo board)
+chat = true               # let viewers chat with the models
+max_sessions = 24
+max_per_ip = 0            # sessions per address; 0 is unlimited
+idle_timeout = 0          # minutes before an idle session is disconnected; 0 never
+intro = true              # the "connecting to..." sequence
+hosts = []                # more host names to answer to without a password, e.g. a proxy's domain
+
+[detect]
+enabled = true            # find model servers by running process and by trying these ports
+ports = [8080, 8081, 8000, 11434, 1234, 5000, 5001]
+
+# Model servers to show even if detection wouldn't find them (another port, another machine,
+# a server that needs an API key). kind is guessed when it's left out.
+#
+# [[server]]
+# name = "qwen"
+# url = "http://127.0.0.1:30000"
+# kind = "llama.cpp"            # llama.cpp | ollama | vllm | openai | custom
+# description = "the everyday chat model"
+# unit = "llama-qwen.service"   # optional: its systemd unit, for state, uptime, restarts and logs
+# user_unit = true              # a systemd --user unit (the default) or a system one
+#
+# [[server]]
+# name = "lmstudio"
+# url = "http://127.0.0.1:1234"
+# kind = "openai"
+# api_key_env = "LMSTUDIO_API_KEY"   # read the API key from this environment variable
+
+[llama_models]
+# An optional convention: one NAME.conf per model (bash: PORT=, ARGS=(...) or CMD=(...)),
+# each run by a systemd user unit. Used when the directory exists.
+dir = "~/llama-models"
+unit = "llama@{name}.service"
+
+[fleet]
+peers = []                # other machines running lonoboard: "host", "host:port" or a URL
+tailscale = true          # also look for lonoboard on your online tailnet peers
+
+[labels]
+# names for other ports published with tailscale serve that lonoboard can't identify
+# 11000 = "DGX Dashboard"
+
+[usage]
+state_dir = ""            # where usage history is kept; defaults to ~/.local/state/lonoboard

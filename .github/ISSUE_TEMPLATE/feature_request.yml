@@ -1,0 +1,16 @@
+name: Idea
+description: A model server, GPU, screen or feature lonoboard should support
+labels: [idea]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you'd like
+      description: What it is, and what you'd use it for.
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Details
+      description: For a model server or GPU, how to talk to it (its API, a metrics endpoint, a CLI) helps a lot.

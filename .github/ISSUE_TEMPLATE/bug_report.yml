@@ -1,0 +1,38 @@
+name: Bug report
+description: Something on the board is wrong, missing or broken
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead. A screenshot helps for anything on screen.
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: lonoboard check
+      description: The output of `lonoboard check` on the machine running the board. Look it over first; it lists your model servers and their URLs.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: how
+    attributes:
+      label: How you're viewing it
+      description: "Browser, or telnet and the terminal: e.g. Firefox 141, or ghostty over telnet, or SyncTERM"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: lonoboard version
+      description: "`lonoboard --version`"
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Model servers involved, how they're run (systemd, Docker, by hand), the GPU, your config if it matters.

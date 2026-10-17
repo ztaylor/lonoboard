@@ -1,0 +1,21 @@
+# lonoboard on an NVIDIA DGX Spark (or any GB10 box) reached over Tailscale.
+#
+# Models are llama-server instances defined as ~/llama-models/NAME.conf and run by a
+# llama@NAME systemd user unit; lonoboard reads those, and auto-detection finds anything else.
+# Publish the board on the tailnet (lonoboard install prints these too):
+#   tailscale serve --bg --http=7777 http://127.0.0.1:7777
+#   tailscale serve --bg --tcp=23 tcp://127.0.0.1:2323        # then: telnet <spark>
+
+[board]
+tagline = "dgx spark"
+listen = "127.0.0.1"      # tailscale serve forwards to it; nothing else can reach it
+
+[llama_models]
+dir = "~/llama-models"
+unit = "llama@{name}.service"
+
+[fleet]
+tailscale = true          # the other Sparks show up on the fleet screen by themselves
+
+[labels]
+11000 = "DGX Dashboard"   # NVIDIA's own dashboard, which runs as root (so lonoboard can't name it)

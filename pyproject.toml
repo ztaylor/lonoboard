@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lonoboard"
+description = "A live dashboard for the machines running your AI models, drawn like a 1990s ANSI BBS"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "src/lonoboard/static/fonts/LICENSE-CC-BY-SA-4.0.txt"]
+requires-python = ">=3.11"
+dependencies = []
+dynamic = ["version"]
+keywords = ["bbs", "ansi", "ansi-art", "telnet", "llama.cpp", "ollama", "vllm", "llm", "dashboard", "homelab"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Terminals :: Telnet",
+    "Topic :: System :: Monitoring",
+]
+
+[project.urls]
+Homepage = "https://github.com/ztaylor/lonoboard"
+Issues = "https://github.com/ztaylor/lonoboard/issues"
+
+[project.scripts]
+lonoboard = "lonoboard.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "lonoboard.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lonoboard = ["static/*.html", "static/fonts/*"]

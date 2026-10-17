@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en" class="crt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lonoboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 16'%3E%3Crect width='8' height='16' fill='%23000'/%3E%3Crect y='2' width='8' height='6' fill='%2355FFFF'/%3E%3Crect y='8' width='8' height='6' fill='%230000AA'/%3E%3C/svg%3E">
+<style>
+/* IBM VGA 8x16 / 9x16 from The Ultimate Oldschool PC Font Pack by VileR (int10h.org), CC BY-SA 4.0 */
+@font-face { font-family: 'VGA8'; src: url('fonts/PxPlus_IBM_VGA_8x16.ttf') format('truetype'); font-display: block; }
+@font-face { font-family: 'VGA9'; src: url('fonts/PxPlus_IBM_VGA_9x16.ttf') format('truetype'); font-display: block; }
+:root { --fs: 16px; --cw: 8px; --font: 'VGA8'; }
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+#term {
+  position: relative; margin: 0 auto; font-family: var(--font), monospace; font-size: var(--fs);
+  line-height: var(--fs); color: var(--c7); font-kerning: none; font-variant-ligatures: none;
+  -webkit-font-smoothing: none; text-rendering: optimizeSpeed; white-space: pre; cursor: default;
+  user-select: text;
+}
+#term .r { height: var(--fs); overflow: hidden; }
+#term a { color: inherit; text-decoration: none; }
+#term a.k, #term a.u { cursor: pointer; }
+#term a.k:hover, #term a.u:hover { background: var(--c1); }
+.bl { animation: blink 1.06s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+#cursor {
+  position: absolute; width: var(--cw); height: calc(var(--fs) / 8); background: var(--c7);
+  display: none; pointer-events: none; animation: blink 1.06s steps(1) infinite;
+}
+#lost {
+  position: fixed; top: 8px; right: 12px; z-index: 50; display: none; font-family: var(--font), monospace;
+  font-size: 16px; line-height: 16px; background: #AA0000; color: #fff; padding: 2px 8px;
+}
+#kbd { position: fixed; left: -100px; top: 0; width: 10px; height: 10px; opacity: 0; }
+/* CRT: faint phosphor bloom + one scanline per font pixel row */
+html.crt #term { text-shadow: 0 0 calc(var(--fs) * .14) currentColor; }
+html.crt body::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 40;
+  background: repeating-linear-gradient(180deg, rgba(0, 0, 0, .28) 0 calc(var(--fs) / 32), transparent calc(var(--fs) / 32) calc(var(--fs) / 8));
+}
+html.crt body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 41;
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(0, 0, 0, .5));
+}
+@media (prefers-reduced-motion: reduce) { .bl, #cursor { animation: none; } }
+</style>
+</head>
+<body>
+<div id="term"><div id="cursor"></div></div>
+<div id="lost">connection lost · reconnecting</div>
+<textarea id="kbd" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="keyboard input"></textarea>
+<script>
+'use strict';
+/* A small ANSI terminal for lonoboard (lonoboard.board). The board itself runs on the server;
+   this draws what it sends and sends back keys. */
+const VGA = ['#000000', '#0000AA', '#00AA00', '#00AAAA', '#AA0000', '#AA00AA', '#AA5500', '#AAAAAA',
+             '#555555', '#5555FF', '#55FF55', '#55FFFF', '#FF5555', '#FF55FF', '#FFFF55', '#FFFFFF'];
+const mono = base => VGA.map((hex, i) => {
+  if (!i) return '#000000';
+  const n = parseInt(hex.slice(1), 16), y = (.299 * (n >> 16) + .587 * ((n >> 8) & 255) + .114 * (n & 255)) / 255;
+  const k = .14 + .86 * y;
+  return '#' + base.map(c => Math.round(c * k).toString(16).padStart(2, '0')).join('');
+});
+const PALETTES = { vga: VGA, amber: mono([255, 176, 0]), green: mono([60, 255, 110]) };
+document.head.insertAdjacentHTML('beforeend', `<style>${VGA.map((_, i) => `.f${i}{color:var(--c${i})}.b${i}{background:var(--c${i})}`).join('')}</style>`);
+
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  sget(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+  sset(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
+};
+let prefs = { font: '8x16', pal: 'vga', ice: true, crt: true };
+try { Object.assign(prefs, JSON.parse(store.get('lonoboard-prefs') || '{}')); } catch {}
+
+const $ = s => document.querySelector(s);
+const term = $('#term'), cursorEl = $('#cursor');
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------- screen model ---------- */
+const T = { cols: 80, rows: 25, scale: 1, cw: 8, cells: [], rowsEl: [], dirty: new Set(),
+            x: 0, y: 0, fg: 7, bg: 0, blink: false, link: null, cursor: false };
+function setupGrid(cols, rows) {
+  T.cols = cols; T.rows = rows;
+  T.cells = Array.from({ length: rows }, () => Array.from({ length: cols }, () => [' ', 7, 0, false, null]));
+  T.rowsEl.forEach(el => el.remove());
+  T.rowsEl = Array.from({ length: rows }, () => { const d = document.createElement('div'); d.className = 'r'; term.appendChild(d); return d; });
+  for (let y = 0; y < rows; y++) T.dirty.add(y);
+  term.style.width = `${cols * T.cw}px`;
+}
+function fitGrid() {
+  const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+  const gw = prefs.font === '9x16' ? 9 : 8;
+  let scale;
+  if (vw >= 160 * gw) scale = Math.min(2, Math.floor(vw / (160 * gw) * 4) / 4);
+  else if (vw >= 80 * gw) scale = Math.min(2, Math.floor(vw / (80 * gw) * 4) / 4);
+  else scale = Math.min(1, vw / (Math.max(40, Math.floor(vw / gw)) * gw));
+  T.scale = scale; T.cw = gw * scale;
+  const root = document.documentElement.style;
+  root.setProperty('--fs', `${16 * scale}px`);
+  root.setProperty('--cw', `${T.cw}px`);
+  root.setProperty('--font', prefs.font === '9x16' ? "'VGA9'" : "'VGA8'");
+  return [Math.max(40, Math.floor(vw / T.cw)), Math.max(12, Math.floor(vh / (16 * scale)))];
+}
+function applyPrefs() {
+  const pal = PALETTES[prefs.pal] || VGA, root = document.documentElement;
+  pal.forEach((c, i) => root.style.setProperty(`--c${i}`, c));
+  root.classList.toggle('crt', !!prefs.crt);
+  for (let y = 0; y < T.rows; y++) T.dirty.add(y);
+}
+
+/* ---------- ANSI parser ---------- */
+let state = 0, buf = '';
+function put(ch) {
+  if (T.x >= T.cols) { T.x = 0; T.y = Math.min(T.rows - 1, T.y + 1); }
+  if (T.y < T.rows) { T.cells[T.y][T.x] = [ch, T.fg, T.bg, T.blink, T.link]; T.dirty.add(T.y); }
+  T.x++;
+}
+// The grid stores CGA palette indices (1 = blue); ANSI numbers colours differently (1 = red).
+const ANSI2CGA = [0, 4, 2, 6, 1, 5, 3, 7];
+function sgr(params) {
+  const ps = params === '' ? [0] : params.split(';').map(n => +n || 0);
+  for (const p of ps) {
+    if (p === 0) { T.fg = 7; T.bg = 0; T.blink = false; }
+    else if (p === 1) { if (T.fg < 8) T.fg += 8; }
+    else if (p === 22) { if (T.fg >= 8) T.fg -= 8; }
+    else if (p === 5) T.blink = true;
+    else if (p === 25) T.blink = false;
+    else if (p >= 30 && p <= 37) T.fg = ANSI2CGA[p - 30] + (ps.includes(1) ? 8 : 0);
+    else if (p === 39) T.fg = 7;
+    else if (p >= 40 && p <= 47) T.bg = ANSI2CGA[p - 40];
+    else if (p === 49) T.bg = 0;
+    else if (p >= 90 && p <= 97) T.fg = ANSI2CGA[p - 90] + 8;
+    else if (p >= 100 && p <= 107) T.bg = ANSI2CGA[p - 100] + 8;
+  }
+}
+function csi(seq) {
+  const fin = seq.at(-1), body = seq.slice(0, -1);
+  if (fin === 'H' || fin === 'f') {
+    const [r, c] = body.split(';').map(n => +n || 1);
+    T.y = Math.min(T.rows - 1, (r || 1) - 1); T.x = Math.min(T.cols - 1, (c || 1) - 1);
+  } else if (fin === 'J' && body === '2') {
+    for (let y = 0; y < T.rows; y++) { T.cells[y].fill(null).forEach((_, x) => T.cells[y][x] = [' ', 7, 0, false, null]); T.dirty.add(y); }
+  } else if (fin === 'm') sgr(body);
+  else if ((fin === 'h' || fin === 'l') && body === '?25') T.cursor = fin === 'h';
+}
+function osc(s) {
+  if (s.startsWith('8;')) { const uri = s.slice(s.indexOf(';', 2) + 1); T.link = uri || null; }
+  else if (s.startsWith('2;') || s.startsWith('0;')) document.title = s.slice(2);
+  else if (s.startsWith('7777;prefs;')) {
+    try {
+      const next = JSON.parse(s.slice(11)), refit = next.font !== prefs.font;
+      prefs = next; store.set('lonoboard-prefs', JSON.stringify(prefs)); applyPrefs();
+      if (refit) resize(true);
+    } catch {}
+  }
+}
+function feed(text) {
+  for (const ch of text) {
+    if (state === 0) {
+      if (ch === '\x1b') state = 1;
+      else if (ch === '\r') T.x = 0;
+      else if (ch === '\n') T.y = Math.min(T.rows - 1, T.y + 1);
+      else if (ch === '\b') T.x = Math.max(0, T.x - 1);
+      else if (ch >= ' ') put(ch);
+    } else if (state === 1) {
+      if (ch === '[') { state = 2; buf = ''; } else if (ch === ']') { state = 3; buf = ''; } else state = 0;
+    } else if (state === 2) {
+      buf += ch;
+      if (ch >= '@' && ch <= '~') { csi(buf); state = 0; }
+    } else if (state === 3) {
+      if (ch === '\x07') { osc(buf); state = 0; }
+      else if (ch === '\x1b') state = 4;
+      else buf += ch;
+    } else if (state === 4) { osc(buf); state = 0; }
+  }
+  schedulePaint();
+}
+
+/* ---------- painting ---------- */
+let painting = false;
+function schedulePaint() { if (!painting) { painting = true; requestAnimationFrame(paint); } }
+function paint() {
+  painting = false;
+  for (const y of T.dirty) {
+    const row = T.cells[y];
+    if (!row) continue;
+    let html = '', link = null, close = '', key = '', run = '';
+    const flush = () => {
+      if (!run) return;
+      const [f, b, bl] = key.split('|');
+      const cls = `f${f}${b !== '0' ? ` b${b}` : ''}${bl === '1' ? ' bl' : ''}`;
+      html += cls === 'f7' ? esc(run) : `<span class="${cls}">${esc(run)}</span>`;
+      run = '';
+    };
+    for (const [ch, f, b0, bl0, l] of row) {
+      if (l !== link) {
+        flush(); html += close; close = ''; link = l; key = '';
+        if (l && l.startsWith('lonoboard:')) { html += `<a class="k" data-k="${esc(l.slice(10))}">`; close = '</a>'; }
+        else if (l && /^https?:\/\//i.test(l)) { html += `<a class="u" href="${esc(l)}" target="_blank" rel="noopener">`; close = '</a>'; }
+      }
+      let b = b0, bl = bl0;
+      if (!prefs.ice && b >= 8) { b -= 8; bl = true; }        // classic blink mode: no bright backgrounds
+      const k = `${f}|${b}|${bl ? 1 : 0}`;
+      if (k !== key) { flush(); key = k; }
+      run += ch;
+    }
+    flush();
+    T.rowsEl[y].innerHTML = html + close;
+  }
+  T.dirty.clear();
+  cursorEl.style.display = T.cursor ? 'block' : 'none';
+  cursorEl.style.left = `${T.x * T.cw}px`;
+  cursorEl.style.top = `${(T.y + 1) * 16 * T.scale - 2 * T.scale}px`;
+}
+
+/* ---------- connection ---------- */
+let sid = null, es = null, sendQ = '', sending = false;
+async function connect(intro) {
+  const [cols, rows] = fitGrid();
+  setupGrid(cols, rows);
+  try {
+    const r = await fetch('term/session', { method: 'POST', body: JSON.stringify({ cols, rows, prefs, intro }) });
+    if (!r.ok) throw new Error(r.status);
+    sid = (await r.json()).id;
+  } catch { return setTimeout(() => connect(false), 3000); }
+  store.sset('lonoboard-connected', '1');
+  es = new EventSource(`term/stream?id=${sid}`);
+  es.onopen = () => { $('#lost').style.display = 'none'; };
+  es.onmessage = e => feed(JSON.parse(e.data));
+  es.onerror = () => {
+    es.close(); sid = null; $('#lost').style.display = 'block';
+    setTimeout(() => connect(false), 2000);
+  };
+}
+function send(s) { sendQ += s; flush(); }
+async function flush() {
+  if (sending || !sendQ || !sid) return;
+  sending = true;
+  const data = sendQ; sendQ = '';
+  try { await fetch(`term/input?id=${sid}`, { method: 'POST', body: data }); } catch {}
+  sending = false;
+  if (sendQ) flush();
+}
+let resizeT;
+function resize(now) {
+  clearTimeout(resizeT);
+  resizeT = setTimeout(() => {
+    const [cols, rows] = fitGrid();
+    if (cols === T.cols && rows === T.rows && !now) return;
+    setupGrid(cols, rows);
+    if (sid) fetch(`term/resize?id=${sid}`, { method: 'POST', body: JSON.stringify({ cols, rows }) });
+  }, now ? 0 : 150);
+}
+
+/* ---------- input ---------- */
+const KEYS = { ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D', PageUp: '\x1b[5~',
+               PageDown: '\x1b[6~', Home: '\x1b[H', End: '\x1b[F', Enter: '\r', Backspace: '\x7f', Escape: '\x1b',
+               Tab: '\t', Delete: '\x1b[3~' };
+addEventListener('keydown', e => {
+  if (e.ctrlKey && (e.key === 'c' || e.key === 'C') && !getSelection().toString()) { send('\x03'); e.preventDefault(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const s = KEYS[e.key] ?? (e.key.length === 1 ? e.key : null);
+  if (s == null) return;
+  e.preventDefault();
+  send(s);
+});
+const kbd = $('#kbd');            // phones: the on-screen keyboard types into this
+kbd.addEventListener('input', () => { if (kbd.value) { send(kbd.value); kbd.value = ''; } });
+addEventListener('paste', e => { const t = e.clipboardData?.getData('text'); if (t) { send(t.replace(/\r?\n/g, ' ')); e.preventDefault(); } });
+term.addEventListener('click', e => {
+  const a = e.target.closest('a.k');
+  if (a) { e.preventDefault(); send(`\x1bPact:${a.dataset.k}\x1b\\`); }
+  if (matchMedia('(pointer: coarse)').matches) kbd.focus();
+});
+let wheel = 0;
+addEventListener('wheel', e => {
+  wheel += e.deltaY;
+  const lines = Math.trunc(wheel / 40);
+  if (lines) { wheel -= lines * 40; send(`\x1bPwheel:${lines * 2}\x1b\\`); }
+  e.preventDefault();
+}, { passive: false });
+let touchY = null;
+addEventListener('touchstart', e => { touchY = e.touches[0].clientY; }, { passive: true });
+addEventListener('touchmove', e => {
+  if (touchY == null) return;
+  const dy = touchY - e.touches[0].clientY, lines = Math.trunc(dy / (16 * T.scale));
+  if (lines) { touchY -= lines * 16 * T.scale; send(`\x1bPwheel:${lines}\x1b\\`); }
+}, { passive: true });
+addEventListener('resize', () => resize(false));
+
+applyPrefs();
+fitGrid();
+Promise.all([document.fonts.load(`16px VGA8`), document.fonts.load(`16px VGA9`)]).finally(() => connect(!store.sget('lonoboard-connected')));
+</script>
+</body>
+</html>
