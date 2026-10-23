@@ -7,7 +7,10 @@
   start at boot: `s`, `r`, `e` in a service's details window, after a confirmation, or
   `POST /api/services/NAME/ACTION`.
 - Only the Tailscale logins listed may, identified by `tailscale serve`'s headers or
-  `tailscale whois`. Telnet and tagged devices can't.
+  `tailscale whois`. Tagged devices can't.
+- Telnet sessions are identified too, when `tailscale serve` forwards them with
+  `--proxy-protocol=1` (or 2): the board reads the PROXY header on connections from localhost.
+  `lonoboard install` and the docs now print the serve command with it.
 - Before starting a model, its weight files are compared with free memory; if they don't fit,
   the board asks again.
 - Works on other machines from the fleet screen, when their board allows this machine.

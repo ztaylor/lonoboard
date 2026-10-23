@@ -216,5 +216,5 @@ def install(args):
     if shutil.which("tailscale"):
         print("to put it on your tailnet:")
         print("  tailscale serve --bg --http=7777 http://127.0.0.1:7777")
-        print("  tailscale serve --bg --tcp=23 tcp://127.0.0.1:2323      # then: telnet <this machine>")
+        print("  tailscale serve --bg --tcp=23 --proxy-protocol=1 tcp://127.0.0.1:2323      # then: telnet <this machine>")
     return 0

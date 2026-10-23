@@ -22,9 +22,13 @@ servers, it still probes the well-known ports.
 Keep lonoboard on localhost, and let Tailscale publish it to your tailnet only:
 
     tailscale serve --bg --http=7777 http://127.0.0.1:7777
-    tailscale serve --bg --tcp=23   tcp://127.0.0.1:2323
+    tailscale serve --bg --tcp=23   --proxy-protocol=1 tcp://127.0.0.1:2323
 
 Then `http://<machine>:7777/` and `telnet <machine>` work from any device on the tailnet.
+`--proxy-protocol` tells the board who each telnet connection is from (it starts with a short
+header naming the sender), which [`[control]`](configuration.md#control) needs; without it telnet
+still works, but nobody on it can control services. (If your `tailscale serve --help` doesn't
+list `--proxy-protocol`, update Tailscale.)
 
 The board's network screen shows the published URLs. The fleet screen finds every other
 machine on the tailnet running lonoboard.

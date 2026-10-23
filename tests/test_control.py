@@ -1,5 +1,6 @@
 """Starting and stopping services: who may, what's allowed, the memory check, the API and the board."""
 import json
+import socket
 import tempfile
 import time
 import unittest
@@ -11,6 +12,7 @@ from unittest import mock
 import helpers
 from lonoboard import config, control, web
 from lonoboard.board import Board, Session
+from lonoboard.board.telnet import read_proxy, serve as telnet_serve
 from lonoboard.cli import App
 from lonoboard.demo import DemoCollector
 
@@ -254,6 +256,7 @@ class TestBoard(unittest.TestCase):
         self.assertIn("[s] stop", self.details(self.session(ME), "qwen"))
         self.assertNotIn("[s] stop", self.details(self.session("bob@github"), "qwen"))
         self.assertNotIn("[s] stop", self.details(self.session(None, "telnet"), "qwen"))
+        self.assertIn("[s] stop", self.details(self.session(ME, "telnet"), "qwen"))
         self.assertNotIn("[s] stop", self.details(self.session(ME), "vllm"))                # docker
 
     def test_stop_asks_first_then_does_it(self):
@@ -329,6 +332,70 @@ class TestFleet(unittest.TestCase):
         finally:
             http.shutdown()
             http.server_close()
+
+
+def proxy_v2(src, command=1):
+    ip = socket.inet_pton(socket.AF_INET6 if ":" in src else socket.AF_INET, src)
+    family = 0x21 if len(ip) == 16 else 0x11
+    body = ip + ip + (5555).to_bytes(2, "big") + (2323).to_bytes(2, "big")
+    return b"\r\n\r\n\x00\r\nQUIT\n" + bytes([0x20 | command, family]) + len(body).to_bytes(2, "big") + body
+
+
+class TestTelnet(unittest.TestCase):
+    """Telnet through tailscale serve --proxy-protocol: the header says who's really connecting."""
+
+    def read(self, data, wait=0.2):
+        a, b = socket.socketpair()
+        with a, b:
+            a.sendall(data)
+            got = read_proxy(b, wait)
+            b.settimeout(0.2)
+            try:
+                rest = b.recv(100)
+            except socket.timeout:
+                rest = b""
+        return got, rest
+
+    def test_headers(self):
+        self.assertEqual(self.read(b"PROXY TCP4 100.64.0.5 127.0.0.1 5555 2323\r\nhi"), ("100.64.0.5", b"hi"))
+        self.assertEqual(self.read(b"PROXY TCP6 fd7a:115c:a1e0::5 ::1 5555 2323\r\n"), ("fd7a:115c:a1e0::5", b""))
+        self.assertEqual(self.read(proxy_v2("100.64.0.5") + b"hi"), ("100.64.0.5", b"hi"))
+        self.assertEqual(self.read(proxy_v2("fd7a:115c:a1e0::5")), ("fd7a:115c:a1e0::5", b""))
+        self.assertEqual(self.read(proxy_v2("100.64.0.5", command=0)), (None, b""))           # LOCAL
+        self.assertEqual(self.read(b"PROXY UNKNOWN\r\n"), (None, b""))
+
+    def test_no_header_leaves_the_connection_alone(self):
+        self.assertEqual(self.read(bytes([255, 251, 24])), (None, bytes([255, 251, 24])))
+        self.assertEqual(self.read(b""), (None, b""))
+
+    def test_broken_headers(self):
+        for bad in (b"PROXY TCP4 not-an-ip 127.0.0.1 1 2\r\n", b"PROXY " + b"x" * 200, b"PROXY TCP4 1.2.3.4\r\n"):
+            with self.assertRaises(ValueError):
+                self.read(bad)
+
+    def connect(self, tel, first=b""):
+        s = socket.create_connection(("127.0.0.1", tel.server_address[1]), timeout=3)
+        s.sendall(first)
+        return s
+
+    def test_sessions_know_their_viewer(self):
+        cfg = controlled_config()
+        board = Board(DemoCollector(cfg, seed=7), cfg)
+        tel = telnet_serve(board, "127.0.0.1", 0)
+        try:
+            with mock.patch.object(control, "whois", side_effect=lambda ip: ME if ip == "100.64.0.5" else None):
+                me = self.connect(tel, b"PROXY TCP4 100.64.0.5 127.0.0.1 5555 2323\r\n")
+                self.assertTrue(wait_for(lambda: any(s.login == ME and s.ip == "100.64.0.5" for s in board.sessions)))
+                plain = self.connect(tel)                                       # straight to the port: nobody
+                self.assertTrue(wait_for(lambda: any(s.ip == "127.0.0.1" and s.login is None for s in board.sessions)))
+                broken = self.connect(tel, b"PROXY nonsense\r\n")
+                broken.settimeout(2)
+                self.assertEqual(broken.recv(100), b"")                         # hung up on
+            for c in (me, plain, broken):
+                c.close()
+        finally:
+            tel.shutdown()
+            tel.server_close()
 
 
 if __name__ == "__main__":
