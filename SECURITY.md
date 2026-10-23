@@ -27,6 +27,24 @@ your machine is doing, so here is what it shows and how it's protected.
   addresses, single-label names, local and tailnet suffixes, this machine's name, and anything
   in `board.hosts`. This defeats DNS rebinding.
 
+## Controlling services
+
+Off by default. With `[control] users` set, the logins listed can start, stop and restart
+services and change whether they start at boot, from the board or the API.
+
+- **Identity comes from Tailscale**: the `Tailscale-User-Login` header `tailscale serve` adds
+  (on connections from localhost), or `tailscale whois` for a board on a tailnet address. Tagged
+  devices and telnet sessions have no login, so they can't control anything.
+- **Anything on the machine itself can claim a login**, by connecting to the board on localhost
+  with that header. Don't turn controls on where other people have accounts, or behind a reverse
+  proxy that passes visitors' headers through. lonoboard won't start with controls on and
+  `listen` beyond localhost or the tailnet.
+- **Other web pages can't send controls in your name**: a control must be a JSON POST, and a
+  browser's `Origin` must be the board's own. A plain form or a cross-site `fetch` fails.
+- **A web session is tied to the login that opened it**; input from anyone else is refused.
+- Only systemd **user** units can be controlled, so the board can't do anything its own user
+  couldn't do with `systemctl --user`.
+
 ## Data from elsewhere
 
 Model names, log lines, chat replies and other boards' data come from programs lonoboard doesn't

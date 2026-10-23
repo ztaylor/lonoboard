@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+**Controlling services** (opt-in, `[control] users`)
+- Start, stop and restart services that run as systemd user units, and choose whether they
+  start at boot: `s`, `r`, `e` in a service's details window, after a confirmation, or
+  `POST /api/services/NAME/ACTION`.
+- Only the Tailscale logins listed may, identified by `tailscale serve`'s headers or
+  `tailscale whois`. Telnet and tagged devices can't.
+- Before starting a model, its weight files are compared with free memory; if they don't fit,
+  the board asks again.
+- Works on other machines from the fleet screen, when their board allows this machine.
+- `GET /api/control` says whether you may.
+
 ## 0.1.0 - 2026-10-17
 
 The first public version.

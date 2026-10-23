@@ -31,6 +31,7 @@ at it at 80x25 too.
 | `src/lonoboard/config.py` | defaults, loading, the listen-address safety check |
 | `src/lonoboard/collector.py` | builds the snapshot, samples every 2 s, feeds usage every 10 s |
 | `src/lonoboard/sources.py` | identifying model servers and describing each kind |
+| `src/lonoboard/control.py` | starting and stopping services: who may, what can be done, the memory check |
 | `src/lonoboard/runtime.py` | listeners, processes, systemd, Docker |
 | `src/lonoboard/hardware.py` | CPU, memory, GPUs |
 | `src/lonoboard/network.py` | Tailscale |

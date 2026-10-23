@@ -70,6 +70,29 @@ Notes on the fields:
 | `GET /api/usage` | `{"hours": [{"hour", "start", "requests", "tokens"} × 24], "top": [{"name", "requests", "tokens", "avg_tps"}]}` |
 | `GET /api/events` | the event log as `[time, [[text, colour], ...]]`, where colour is a CGA palette index |
 | `GET /api/logs/NAME?n=100` | the last `n` lines of a service's journal or container log |
+| `GET /api/control` | `{"enabled", "you", "allowed"}`: whether service controls are on, who the board thinks you are, and whether you may use them |
+
+## Controlling services
+
+    POST /api/services/NAME/ACTION        ACTION: start | stop | restart | enable | disable
+
+`enable` starts the service now and at boot, and `disable` stops it now and at boot. The body is
+a JSON object, `{}` or `{"force": true}`. Only logins in `[control] users` may do this; see
+[configuration](configuration.md#control).
+
+    curl -X POST -H 'Content-Type: application/json' -d '{}' http://gpu-box:7777/api/services/qwen/stop
+
+| status | meaning |
+|--------|---------|
+| `200` | `{"ok": true, "service", "action"}`. The board asked systemd; the snapshot shows the result in a moment |
+| `400` | an unknown action, or a body that isn't a JSON object |
+| `403` | controls are off, you aren't allowed, or the request came from another web page |
+| `404` | no such service |
+| `409` | it isn't a systemd user unit, or `{"fits": false, "need_gib", "free_gib"}`: its weights are bigger than free memory. Send `{"force": true}` to start it anyway |
+| `500` | `systemctl` failed; `error` says why |
+
+The body must be sent as `Content-Type: application/json`, and a browser's `Origin`, if any, must
+be the board itself. Together these keep other web pages from sending controls in your name.
 
 The endpoints under `/term/` (`session`, `stream`, `input`, `resize`) belong to the web
 terminal. They're not a stable API.

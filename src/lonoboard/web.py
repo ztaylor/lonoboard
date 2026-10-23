@@ -7,6 +7,9 @@
     GET  /api/usage        requests per hour (24 h) and the top 10 by tokens today
     GET  /api/events       the board's event log
     GET  /api/logs/NAME    recent log lines of a service (systemd or docker)
+    GET  /api/control      whether you may start and stop services here: {"enabled", "you", "allowed"}
+    POST /api/services/NAME/ACTION   start | stop | restart | enable | disable (JSON body, {"force": true}
+                           to start one whose weights don't fit in free memory)
     GET  /health           {"status": "ok", "app": "lonoboard", "version": ...}
     POST /term/session     web terminal: start a session -> {"id"}
     GET  /term/stream?id=   web terminal: the session's ANSI output (server-sent events)
@@ -16,6 +19,9 @@
 With a password set, the JSON API wants it as a Bearer token (or Basic auth, any user name);
 the web terminal asks for it on screen. Without one, the board only answers to host names a web
 page elsewhere can't point at it (config.host_allowed), so other sites can't read it.
+
+Service controls need [control] users: the Tailscale logins allowed to use them (see control.py).
+They also want a JSON body and no other site's Origin, so a page elsewhere can't post them.
 """
 import base64
 import hmac
@@ -28,7 +34,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from lonoboard import __version__
+from lonoboard import __version__, control
 from lonoboard.config import host_allowed
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -79,6 +85,19 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return hmac.compare_digest(given.encode(), pw.encode())
 
+    def who(self):
+        return control.identity(self.client_address[0], self.headers)
+
+    def same_origin(self):
+        """No other web page sent this: browsers name the page's origin, and a JSON body needs CORS."""
+        origin = self.headers.get("Origin")
+        if origin and urllib.parse.urlsplit(origin).netloc.lower() not in {
+                (self.headers.get(h) or "").lower() for h in ("Host", "X-Forwarded-Host")}:
+            return False
+        if self.headers.get("Sec-Fetch-Site") in ("cross-site", "same-site"):
+            return False
+        return self.headers.get("Content-Type", "").split(";")[0].strip() == "application/json"
+
     def host_ok(self):
         if host_allowed(self.headers.get("Host"), self.app.board.cfg):
             return True
@@ -113,16 +132,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.app.board.web_stream(sess, self)
         if not path.startswith("/api") and path != "/":
             return self.send_error(404)
-        guesses, ip = self.server.guesses, self.client_address[0]
-        if guesses.locked(ip):
-            return self.send(429, b"too many wrong passwords; try again later\n", "text/plain")
-        if not self.authorized():
-            if self.headers.get("Authorization"):
-                guesses.wrong(ip)
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="lonoboard"')
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+        if not self.api_auth():
             return
         c = self.app.collector
         if path in ("/", "/api"):
@@ -136,6 +146,9 @@ class Handler(BaseHTTPRequestHandler):
             body = c.usage_summary(24)
         elif path == "/api/events":
             body = {"events": self.app.board.hub.events_json()}
+        elif path == "/api/control":
+            cfg, who = self.app.board.cfg, self.who()
+            body = {"enabled": control.enabled(cfg), "you": who, "allowed": control.allowed(who, cfg)}
         elif m := re.fullmatch(r"/api/logs/([\w.@:-]+)", path):
             if not any(t["name"] == m.group(1) for t in c.targets()):
                 return self.send_error(404)
@@ -144,6 +157,40 @@ class Handler(BaseHTTPRequestHandler):
         else:
             return self.send_error(404)
         self.json(body)
+
+    def api_auth(self):
+        """The board's password, if it has one (False once it has answered)."""
+        guesses, ip = self.server.guesses, self.client_address[0]
+        if guesses.locked(ip):
+            self.send(429, b"too many wrong passwords; try again later\n", "text/plain")
+            return False
+        if not self.authorized():
+            if self.headers.get("Authorization"):
+                guesses.wrong(ip)
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="lonoboard"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+        return True
+
+    def control_request(self, name, action, body):
+        if not self.api_auth():
+            return
+        if not self.same_origin():
+            return self.json({"error": "send JSON, from this board or a script, not another web page"}, 403)
+        cfg, who = self.app.board.cfg, self.who()
+        if not control.enabled(cfg):
+            return self.json({"error": "service controls are off on this board (control.users)"}, 403)
+        if not control.allowed(who, cfg):
+            return self.json({"error": f"{who or 'this request'} isn't allowed to control services here"}, 403)
+        try:
+            req = json.loads(body or "{}")
+            force = req.get("force") is True
+        except (ValueError, AttributeError):
+            return self.json({"error": "the body should be a JSON object"}, 400)
+        code, res = self.app.board.hub.control(name, action, force, who)
+        self.json(res, code)
 
     def do_POST(self):
         if not self.host_ok():
@@ -156,11 +203,14 @@ class Handler(BaseHTTPRequestHandler):
         n = min(int(n), 65536)
         body = self.rfile.read(n).decode("utf-8", "replace") if n else ""
         board = self.app.board
+        if m := re.fullmatch(r"/api/services/([\w.@:-]+)/(\w+)", url.path):
+            return self.control_request(m.group(1), m.group(2), body)
         if url.path == "/term/session":
             try:
                 req = json.loads(body or "{}")
                 sess = board.web_create(int(req.get("cols", 80)), int(req.get("rows", 25)),
-                                        req.get("prefs") or {}, bool(req.get("intro", True)), self.client_address[0])
+                                        req.get("prefs") or {}, bool(req.get("intro", True)), self.client_address[0],
+                                        self.who())
             except (ValueError, TypeError, AttributeError):
                 return self.send_error(400)
             if not sess:
@@ -169,6 +219,8 @@ class Handler(BaseHTTPRequestHandler):
         sess = board.web.get(query.get("id", [""])[0])
         if not sess:
             return self.send_error(404)
+        if sess.login and self.who() != sess.login:          # a session can control things: keep it to its viewer
+            return self.send_error(403)
         if url.path == "/term/input":
             sess.feed(body)
         elif url.path == "/term/resize":
@@ -181,8 +233,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(404)
         self.send(204, b"", "text/plain")
 
-    def json(self, body):
-        self.send(200, (json.dumps(body, indent=2) + "\n").encode(), "application/json")
+    def json(self, body, code=200):
+        self.send(code, (json.dumps(body, indent=2) + "\n").encode(), "application/json")
 
     def send(self, code, data, ctype, cache="no-store"):
         self.send_response(code)

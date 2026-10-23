@@ -7,7 +7,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from lonoboard import __version__, runtime, sources
+from lonoboard import __version__, control, runtime, sources
 from lonoboard.config import board_name, exposure, peer_url, state_dir
 from lonoboard.hardware import Hardware
 from lonoboard.network import Network
@@ -378,6 +378,13 @@ class Collector:
             lines = runtime.journal(src[1], src[2], n=n, output="short-iso", timeout=5)
             return [re.sub(r"^(\S+) \S+ [^:]+: ", r"\1 ", line) for line in lines]
         return runtime.docker_logs(src[1], n)
+
+    def control(self, sv, action):
+        """Start, stop, ... a service's systemd user unit (control.perform has checked it may)."""
+        ok, msg = control.systemctl(action, sv["run"]["unit"])
+        with self._lock:
+            self._snap_at = 0                       # the next snapshot shows the change
+        return ok, msg
 
     def chat_stream(self, name, model, messages, cancelled=lambda: False):
         t = self.target(name)

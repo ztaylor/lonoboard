@@ -13,6 +13,7 @@ import time
 import uuid
 from collections import deque
 
+from lonoboard import control
 from lonoboard.board.hub import Chat, Hub, RemoteHub
 from lonoboard.board.model import chat_capable, chat_targets
 from lonoboard.board.render import Screen, center_segs, clean, dur, encode
@@ -24,6 +25,8 @@ KEYSEQ = {'[A': 'up', '[B': 'down', '[C': 'right', '[D': 'left', 'OA': 'up', 'OB
           'OD': 'left', '[5~': 'pgup', '[6~': 'pgdn', '[H': 'home', '[F': 'end', '[1~': 'home', '[4~': 'end',
           '[7~': 'home', '[8~': 'end', 'OH': 'home', 'OF': 'end', '[3~': 'del', '[Z': 'btab'}
 LOGIN_TRIES = 3
+CONTROL_KEYS = ('s', 'r', 'e')           # in a service's details: start/stop, restart, start at boot or not
+NOTICE_FOR = 10                          # seconds a control result stays on screen
 
 
 def parse_keys(s):
@@ -143,7 +146,7 @@ class Board:
         return bool(self.password) and hmac.compare_digest(attempt.encode(), self.password.encode())
 
     # --- web terminal sessions ---
-    def web_create(self, cols, rows, prefs, intro, ip=None):
+    def web_create(self, cols, rows, prefs, intro, ip=None, login=None):
         for sid, s in list(self.web.items()):          # sweep sessions whose stream never attached or died
             if not s.alive or (not getattr(s, 'attached', False) and time.time() - s.last_seen > 30):
                 s.alive = False
@@ -151,7 +154,7 @@ class Board:
         if self.full(ip):
             return None
         s = Session(self, 'web', cols, rows, utf8=True, prefs=clean_prefs(prefs), intro=intro and self.intro)
-        s.ip = ip
+        s.ip, s.login = ip, login
         s.resize(cols, rows)
         self.web[s.id] = s
         return s
@@ -206,6 +209,8 @@ class Session:
         self.mouse = False
         self.title = None
         self.ip = None
+        self.login = None                    # the viewer's Tailscale login (web sessions through tailscale serve)
+        self.notice = None                   # the last service control: {name, text, color, t, busy}
 
     # --- input ---
     def feed(self, text):
@@ -282,7 +287,8 @@ class Session:
             k = val[4:]
             if self.modal and self.modal[0] == 'chat' and k != 'esc':
                 return
-            if self.modal and self.modal[0] != 'quit' and k not in ('esc', ' ', 'b'):
+            if self.modal and self.modal[0] not in ('quit', 'confirm') and k not in ('esc', ' ', 'b') \
+                    and not (self.modal[0] == 'svc' and k in CONTROL_KEYS):
                 self.modal = None                              # a click outside the window: go there
         if self.modal:
             return self.handle_modal(k, svcs)
@@ -373,6 +379,14 @@ class Session:
         kind = self.modal[0]
         if kind == 'chat':
             return self.handle_chat(k)
+        if kind == 'confirm':                          # start qwen? [Y/n]
+            _, name, action, tight = self.modal
+            if k in ('enter', 'y', 'Y'):
+                self.run_control(name, action, force=bool(tight))
+                self.modal = ('svc', name)
+            elif k in ('esc', 'n', 'N', 'q', 'Q', 'ctrlc'):
+                self.modal = ('svc', name)
+            return
         if kind == 'quit':                             # disconnect? [Y/n]
             if k in ('enter', 'y', 'Y', 'q', 'Q', 'g', 'G'):
                 self.goodbye = True
@@ -396,6 +410,10 @@ class Session:
                 self.open('svc', svcs[self.sel]['name'])
             elif k in ('c', 'C') and chat_capable(svcs[self.sel]):
                 self.open_chat(svcs[self.sel]['name'])
+            elif isinstance(k, str) and k.lower() in CONTROL_KEYS:
+                sv = next((x for x in svcs if x['name'] == self.modal[1]), None)
+                if sv:
+                    self.ask_control(sv, k.lower())
         elif kind == 'display' and isinstance(k, str):
             p = self.prefs
             if k in ('f', 'F') and self.kind == 'web':
@@ -434,6 +452,58 @@ class Session:
         self.modal, self.modal_scroll = (kind, arg), 0
         if kind == 'svc':
             self.journal_at = 0
+
+    # --- starting and stopping services ---
+    def may_control(self, sv=None):
+        """Whether this viewer may control services on the board they're looking at (and this one)."""
+        if not control.allowed(self.login, self.board.cfg):
+            return False
+        if self.hub.remote and not (self.hub.control_info or {}).get('allowed'):
+            return False
+        return sv is None or control.controllable(sv)
+
+    def control_busy(self):
+        n = self.notice
+        return bool(n and n['busy'])
+
+    def ask_control(self, sv, key):
+        if not self.may_control(sv) or self.control_busy():
+            return
+        acts = control.actions_for(sv)
+        action = {'s': 'stop' if 'stop' in acts else 'start', 'r': 'restart' if 'restart' in acts else None,
+                  'e': 'disable' if 'disable' in acts else 'enable'}[key]
+        if action:
+            self.modal = ('confirm', sv['name'], action, None)
+
+    def run_control(self, name, action, force=False):
+        """Do it in the background (systemctl can take a moment); the details window shows how it went."""
+        hub = self.hub
+        word = {'start': 'starting', 'stop': 'stopping', 'restart': 'restarting', 'enable': 'starting',
+                'disable': 'stopping'}[action]
+        self.notice = {'name': name, 'text': f'{word} {name}…' if self.utf8 else f'{word} {name}...',
+                       'color': 14, 't': time.time(), 'busy': True}
+
+        def work():
+            code, body = hub.control(name, action, force, self.login)
+            if code == 409 and body.get('fits') is False and not force:
+                self.notice = None
+                if self.alive and self.hub is hub:
+                    self.modal = ('confirm', name, action, body)
+            elif code == 200:
+                self.notice = {'name': name, 'text': f'{control.describe(action, name)}: done', 'color': 10,
+                               't': time.time(), 'busy': False}
+            else:
+                self.notice = {'name': name, 'text': body.get('error') or f"couldn't {action} {name} (http {code})",
+                               'color': 12, 't': time.time(), 'busy': False}
+            self.dirty.set()
+
+        threading.Thread(target=work, daemon=True, name='lonoboard-control').start()
+
+    def current_notice(self, name):
+        n = self.notice
+        if n and n['name'] == name and (n['busy'] or time.time() - n['t'] < NOTICE_FOR):
+            return n
+        return None
 
     # --- chat ---
     def open_chat(self, service=None):

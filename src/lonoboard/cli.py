@@ -144,6 +144,8 @@ def check(cfg):
     print(f"tailscale   {ts['dns_name'] if ts else ('not running' if c.net.tailscale else 'not installed')} "
           f"{'(optional)' if not ts else ''}".rstrip())
     print(f"docker      {'available' if runtime.docker_available() else 'not available (optional)'}")
+    users = cfg["control"]["users"]
+    print(f"control     {'for ' + ', '.join(users) if users else 'off (list Tailscale logins in control.users to turn it on)'}")
     print()
     if not snap["services"]:
         print("model servers  none found.")

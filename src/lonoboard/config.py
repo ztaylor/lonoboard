@@ -42,6 +42,9 @@ DEFAULTS = {
         "tailscale": True,     # also look for lonoboard on online tailnet peers
     },
     "labels": {},              # names for other tailscale-served ports: {"11000" = "DGX Dashboard"}
+    "control": {
+        "users": [],           # Tailscale logins that may start, stop and enable services; empty = nobody
+    },
     "usage": {
         "state_dir": "",       # where usage history is kept; defaults to $XDG_STATE_HOME/lonoboard
     },
@@ -103,6 +106,9 @@ def validate(cfg):
             raise ConfigError(f"board.{k} should be a non-negative integer")
     if not isinstance(b["hosts"], list) or not all(isinstance(h, str) for h in b["hosts"]):
         raise ConfigError('board.hosts should be a list of host names, e.g. ["board.example.com"]')
+    users = cfg["control"]["users"]
+    if not isinstance(users, list) or not all(isinstance(u, str) and u.strip() for u in users):
+        raise ConfigError('control.users should be a list of Tailscale logins, e.g. ["alice@github"]')
 
 
 def state_dir(cfg):
@@ -172,8 +178,13 @@ def host_allowed(host, cfg):
 
 
 def check_exposure(cfg):
-    """Refuse to serve an unprotected board beyond localhost / the tailnet."""
+    """Refuse to serve an unprotected board beyond localhost / the tailnet, or controls beyond it at all."""
     b = cfg["board"]
+    if cfg["control"]["users"] and exposure(b["listen"]) == "network":
+        raise ConfigError(
+            f"control.users is set, and the board would listen on {b['listen']}, beyond your tailnet.\n"
+            "service controls trust Tailscale to say who's asking, so they only work on localhost (behind\n"
+            "tailscale serve) or a tailnet address. listen on one of those, or empty control.users.")
     if exposure(b["listen"]) == "network" and not b["password"] and not b["allow_anonymous"]:
         raise ConfigError(
             f"listening on {b['listen']} would put the board on your network without a password.\n"
