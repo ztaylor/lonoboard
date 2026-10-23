@@ -5,13 +5,16 @@ recent requests, usage, the event log and fleet summaries. Hub is fed by this ma
 collector; RemoteHub by another machine's lonoboard API, so a session can view any board in the fleet
 just by switching hubs.
 """
+import json
 import threading
 import time
+import urllib.parse
 from collections import deque
 
+from lonoboard import control
 from lonoboard.board.model import expected, healthy, status
 from lonoboard.board.render import SVC_COLORS, dur
-from lonoboard.util import get_json, stream_chat
+from lonoboard.util import get_json, http, stream_chat
 
 HISTORY_LEN = 450
 
@@ -36,6 +39,7 @@ class BaseHub:
         self.thread = None
         self.error = None
         self.auth = {}                      # Authorization header for password-protected peers
+        self.control_info = None            # a remote board's answer to "may this machine control you?"
 
     @property
     def hist(self):
@@ -177,6 +181,19 @@ class Hub(BaseHub):
     def logs(self, name, n=30):
         return self.collector.logs(name, n)
 
+    def control(self, name, action, force=False, who=None):
+        """Start, stop, ... one of this machine's services. (HTTP status, body)."""
+        code, body = control.perform(self.collector, name, action, force)
+        if code == 200:
+            n = (name, self.color(name))
+            verb = {"start": " started ", "stop": " stopped ", "restart": " restarted ", "enable": " started ",
+                    "disable": " stopped "}[action]
+            note = {"enable": " and set it to start at boot", "disable": " and set it not to start at boot"}.get(action, "")
+            self.log([(who or "someone", 15), (verb, 7), n, (note, 7)])
+            self.force = True
+            self.wake.set()
+        return code, body
+
     def chat_stream(self, service, model, messages, cancelled):
         return self.collector.chat_stream(service, model, messages, cancelled)
 
@@ -190,8 +207,8 @@ class RemoteHub(BaseHub):
         self.url, self.label = url.rstrip("/"), name
 
     def run(self):
-        due = {"snap": 0, "callers": 0, "usage": 0, "events": 0}
-        every = {"snap": 2.5, "callers": 10, "usage": 60, "events": 5}
+        due = {"snap": 0, "callers": 0, "usage": 0, "events": 0, "control": 0}
+        every = {"snap": 2.5, "callers": 10, "usage": 60, "events": 5, "control": 30}
         idle_since = None
         while True:
             if not self.sessions:                  # nobody's looking: stop after a while
@@ -227,6 +244,9 @@ class RemoteHub(BaseHub):
                     if ev is not None:
                         self.events = deque(((t, [tuple(s) for s in segs]) for t, segs in ev), maxlen=300)
                     due["events"] = now + every["events"]
+                if now >= due["control"]:
+                    self.control_info = get_json(f"{self.url}/api/control", 5, self.auth)
+                    due["control"] = now + every["control"]
             except Exception as e:  # noqa: BLE001
                 self.error = str(e)[:80]
             self.notify()
@@ -235,6 +255,22 @@ class RemoteHub(BaseHub):
 
     def logs(self, name, n=30):
         return (get_json(f"{self.url}/api/logs/{name}?n={n}", 5, self.auth) or {}).get("lines") or []
+
+    def control(self, name, action, force=False, who=None):
+        """Ask the other board to do it. It decides by who this machine is on the tailnet."""
+        url = f"{self.url}/api/services/{urllib.parse.quote(name)}/{action}"
+        code, raw = http(url, 15, {**self.auth, "Content-Type": "application/json"},
+                         json.dumps({"force": force}).encode(), "POST")
+        try:
+            body = json.loads(raw) if raw else {}
+        except ValueError:
+            body = {}
+        if not code:
+            body = {"error": f"can't reach {self.label}"}
+        if code == 200:
+            self.force = True
+            self.wake.set()
+        return code, body if isinstance(body, dict) else {}
 
     def chat_stream(self, service, model, messages, cancelled):
         sv = next((s for s in (self.data or {}).get("services", []) if s["name"] == service), None)

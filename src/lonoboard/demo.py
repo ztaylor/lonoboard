@@ -73,6 +73,7 @@ class DemoCollector:
         self.restarting = {}                                     # name -> time it comes back
         self.restarts = {s["name"]: 0 for s in SERVICES}
         self.restart_at = {}
+        self.stopped, self.disabled = set(), set()             # services stopped / not started at boot from the board
         self.gpu = {"util": 4.0, "temp": 38.0, "power": 62.0}
         now = time.time()
         self.boot = now - 3 * 86400 - 5 * 3600
@@ -96,6 +97,8 @@ class DemoCollector:
             busy_now = {}
             for s in SERVICES:
                 n = s["name"]
+                if n in self.stopped:
+                    continue
                 if n in self.restarting:
                     if t >= self.restarting[n]:
                         del self.restarting[n]
@@ -123,7 +126,7 @@ class DemoCollector:
             g["util"] += (target - g["util"]) * 0.6
             g["temp"] += ((36 + g["util"] * 0.42) - g["temp"]) * 0.15
             g["power"] = 58 + g["util"] * 5.6 + rng.uniform(-6, 6)
-            used = sum(s["gpu"] for s in SERVICES if s["name"] not in self.restarting) / 1024
+            used = sum(s["gpu"] for s in SERVICES if s["name"] not in set(self.restarting) | self.stopped) / 1024
             self.history.append({"t": round(t, 1), "gpu": round(g["util"], 1), "temp": round(g["temp"], 1),
                                  "power": round(g["power"], 1), "mem": round(used + 0.8, 1), "busy": busy_now})
 
@@ -190,10 +193,12 @@ class DemoCollector:
         t = {"name": spec["name"], "kind": spec["kind"], "url": f"http://127.0.0.1:{spec['port']}",
              "description": spec["desc"], "endpoints": spec.get("endpoints") or [], "origin": "demo"}
         s = base_service(t)
-        restarting = spec["name"] in self.restarting
+        restarting, stopped = spec["name"] in self.restarting, spec["name"] in self.stopped
         mgr, unit = spec["mgr"]
         s["run"].update(manager=mgr, unit=unit, user=mgr == "systemd" and spec["kind"] != "ollama",
-                        state="activating" if restarting else "active", sub_state="running", enabled=mgr != "process",
+                        state="inactive" if stopped else "activating" if restarting else "active",
+                        sub_state="dead" if stopped else "running",
+                        enabled=mgr != "process" and spec["name"] not in self.disabled,
                         pid=40000 + spec["port"], since=None if restarting else (
                             self.started - (spec["port"] % 97) * 3511 - 7200 if self.restarts[spec["name"]] == 0
                             else self.restart_at.get(spec["name"], now)),
@@ -229,7 +234,30 @@ class DemoCollector:
             s["model"]["last_request"], s["model"]["requests_today"] = last, today
         if s["chat"] and not self.cfg["board"]["chat"]:
             s["chat"] = None
+        if stopped:
+            s.update(health="unreachable", latency_ms=None, chat=None, version=None)
+            s["run"].update(pid=None, since=None)
+            s["memory_mib"] = {"gpu": None, "process": None}
+            if s["model"]:
+                s["model"]["slots_busy"] = None
         return copy.deepcopy(s)
+
+    def control(self, sv, action):
+        """Pretend to run a systemd action: stopped services go quiet, started ones come up in a few seconds."""
+        n = sv["name"]
+        with self.lock:
+            if action in ("stop", "disable"):
+                self.stopped.add(n)
+                self.busy[n] = []
+            else:
+                self.stopped.discard(n)
+                self.restarting[n] = time.time() + self.rng.uniform(4, 8)
+                self.restart_at[n] = self.restarting[n]
+            if action == "disable":
+                self.disabled.add(n)
+            elif action == "enable":
+                self.disabled.discard(n)
+        return True, ""
 
     def callers(self, n=30):
         return [dict(e) for e in self.usage.recent(n)]

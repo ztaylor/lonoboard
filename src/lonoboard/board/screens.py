@@ -4,6 +4,7 @@ import re
 import time
 from datetime import datetime
 
+from lonoboard import control
 from lonoboard.board.logo import G, draw_logo, logo
 from lonoboard.board.model import busy_of, chat_capable, chat_targets, expected, healthy, requests_today, status
 from lonoboard.board.render import (BLINK, SPIN, Screen, boxed, center_segs, clean, dur, fade_rule, fit, frame_box, gib,
@@ -812,6 +813,8 @@ def build_modal(v, W, vh):
                   B('[', 9, 'k:key:n'), B('N', 15, 'k:key:n'), B('] no', 9, 'k:key:n')]]
         box, _ = frame_box(min(W, 44), 'quit', lines, '[enter] yes · [esc] no')
         return box, None
+    if kind == 'confirm':
+        return build_confirm(v, W), None
     if kind == 'help':
         lines, title, mw = help_lines(v), 'help', 70
     elif kind == 'display':
@@ -828,6 +831,43 @@ def build_modal(v, W, vh):
     height = min(len(lines) + 2, vh - 1)
     box, v.s.modal_scroll = frame_box(mw, title, lines, foot, height, v.s.modal_scroll)
     return box, None
+
+
+def build_confirm(v, W):
+    """Start qwen? [Y/n] - and, when its weights won't fit in free memory, start it anyway?"""
+    _, name, action, tight = v.s.modal
+    B = lambda t, f=7, l=None: (t, f, 1, l)
+    MW = min(W, 60)
+    lines = [[B(ln, 15)] for ln in wrap(control.describe(action, name) + '?', MW - 4)]
+    if tight:
+        lines.append([])
+        lines += [[B(ln, 14)] for ln in wrap(f"its weights need about {tight['need_gib']} gib and "
+                                             f"{tight['free_gib']} gib is free.", MW - 4)]
+        lines += [[B(ln)] for ln in wrap('it may fail to load, or push other things out of memory.', MW - 4)]
+    lines += [[], [B('  '), B('[', 9, 'k:key:y'), B('Y', 15, 'k:key:y'), B('] yes', 9, 'k:key:y'), B('    '),
+                   B('[', 9, 'k:key:n'), B('N', 15, 'k:key:n'), B('] no', 9, 'k:key:n')]]
+    box, _ = frame_box(MW, 'start anyway' if tight else 'confirm', lines, '[enter] yes · [esc] no')
+    return box
+
+
+def control_segs(v, sv, width):
+    """The details window's control row: [s] stop  [r] restart  [e] don't start at boot (or how it went)."""
+    n = v.s.current_notice(sv['name'])
+    if n:
+        return [(fit(n['text'], width), n['color'], 1)]
+    acts = control.actions_for(sv)
+    long_ = [('s', 'stop' if 'stop' in acts else 'start')] + ([('r', 'restart')] if 'restart' in acts else []) + \
+            [('e', "don't start at boot" if 'disable' in acts else 'start at boot')]
+    short = [(k, label.replace("don't start at boot", 'boot off').replace('start at boot', 'boot on')) for k, label in long_]
+    for opts in (long_, short, [(k, '') for k, _ in long_]):
+        segs = []
+        for key, label in opts:
+            link = f'k:key:{key}'
+            segs += [('  ' if segs else '', 7, 1), ('[', 9, 1, link), (key, 15, 1, link),
+                     (']' + (f' {label}' if label else ''), 9, 1, link)]
+        if sum(len(x[0]) for x in segs) <= width:
+            return segs
+    return segs
 
 
 def build_login(v, W):
@@ -867,6 +907,8 @@ def svc_lines(v, MW, name=None, journal=True):
     B = lambda t, f=15: (t, f, 1)
     st_text = {'busy': 'running · generating', 'ok': 'running · idle', 'starting': 'starting', 'off': 'stopped'}.get(st[0], st[1])
     kv('status', [B(st_text, {'busy': 11, 'ok': 10, 'warn': 14, 'starting': 14, 'bad': 12, 'off': 7}[st[0]])])
+    if s.may_control(sv):
+        lines.append(lab('control') + control_segs(v, sv, VW))
     kv('server', [B(sv['kind']), B(f" · {sv['version']}" if sv.get('version') else '', 7), B(f" · found by {sv.get('origin', 'config')}", 7)])
     if m.get('id') and sv['kind'] != 'ollama':
         extra = ' · '.join(x for x in (f"{m['params_b']}b" if m.get('params_b') else '', (m.get('quant') or '').lower(),
@@ -977,6 +1019,8 @@ def help_lines(v):
         key('space', 'next page, then the next screen'), key('b', 'back a page'),
         key('c', 'chat with a model'), key('d', 'display options'),
     ]
+    if v.s.may_control():
+        lines += [key('s r e', "in a service's details: start or stop · restart · start at boot")]
     lines += [key('q', 'quit (g works too, as on the old boards)')] if v.s.kind == 'telnet' else []
     lines += [{'divider': 'notes'},
               [B('tok/s', 11), B('    generation speed of the last request')],

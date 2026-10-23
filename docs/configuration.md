@@ -125,6 +125,37 @@ they run as another user. `[labels]` gives them names:
 11000 = "DGX Dashboard"
 ```
 
+## `[control]`
+
+| setting | default | |
+|---------|---------|---|
+| `users` | `[]` | Tailscale logins that may start, stop and enable services from the board, e.g. `["alice@github"]` |
+
+With `users` empty, which is the default, nobody can control anything. With a login listed, that
+person sees a **control** row in a service's details window: `s` starts or stops it, `r`
+restarts it, and `e` turns starting at boot on or off. Each asks first. The same actions are in
+the API.
+
+- **What can be controlled:** services that run as a systemd user unit, such as `[llama_models]`
+  ones or a `[[server]]` with `unit`. The board runs as the same user, so it needs no extra
+  privileges. System units and containers are shown but not controlled.
+- **Who is asking** comes from Tailscale. Through `tailscale serve`, it's the
+  `Tailscale-User-Login` header that serve adds to each request; serve replaces any the client
+  sends. On a board listening on a tailnet address, lonoboard asks `tailscale whois`. Requests
+  from tagged devices have no login, and telnet sessions can't be identified, so neither can
+  control anything.
+- **The header is trusted on connections from localhost**, because that's how `tailscale serve`
+  delivers them. Anything else running on the machine can send it too. On a machine other people
+  log in to, or behind another reverse proxy that forwards visitors' headers, don't set `users`.
+  lonoboard refuses to start with `users` set and `listen` beyond localhost or the tailnet.
+- **Memory:** before starting a model, lonoboard adds up its weight files (`-m`, `--mmproj`,
+  `-md`, including split GGUFs) and compares them with free memory: system memory on
+  unified-memory machines like the DGX Spark, free VRAM on discrete GPUs. If they don't fit,
+  it asks again before going ahead. The KV cache comes on top, so this is a lower bound.
+- **Other machines:** from the fleet screen you can control another board's services if you're
+  allowed on this board and the other board allows this machine. Through `tailscale serve`, that
+  means this machine's owner is in the other board's `users`.
+
 ## `[usage]`
 
 | setting | default | |

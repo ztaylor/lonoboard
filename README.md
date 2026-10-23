@@ -60,6 +60,9 @@ The board is made of **screens**, each sized to your window:
   - The mouse works: click entries, rows and links, and use the wheel to turn pages.
 - **Details** (`enter` on a service): status, model, context, last request, memory, the systemd
   unit or container, endpoints, launch flags, and a live tail of its log.
+- **Control** (opt-in): start, stop and restart models, and choose which start at boot, from
+  their details window. Only the Tailscale logins you list can, and it checks a model fits in
+  free memory first. See [`[control]`](https://github.com/ztaylor/lonoboard/blob/main/docs/configuration.md#control).
 - **Chat** (`c`): talk to any chat model on the machine, and `tab` switches model. Replies
   stream, reasoning collapses into a summary, and `esc` stops a reply. Conversations aren't
   stored.
