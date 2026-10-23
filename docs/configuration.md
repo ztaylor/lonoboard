@@ -141,11 +141,14 @@ the API.
   privileges. System units and containers are shown but not controlled.
 - **Who is asking** comes from Tailscale. Through `tailscale serve`, it's the
   `Tailscale-User-Login` header that serve adds to each request; serve replaces any the client
-  sends. On a board listening on a tailnet address, lonoboard asks `tailscale whois`. Requests
-  from tagged devices have no login, and telnet sessions can't be identified, so neither can
-  control anything.
-- **The header is trusted on connections from localhost**, because that's how `tailscale serve`
-  delivers them. Anything else running on the machine can send it too. On a machine other people
+  sends. For telnet through `tailscale serve --proxy-protocol=1` (or 2), the PROXY header serve
+  puts at the start of each connection names the sender, and lonoboard asks `tailscale whois`
+  about it, as it does for a board listening on a tailnet address. Requests from tagged devices
+  have no login, and neither do telnet connections without the header, so they can't control
+  anything.
+- **The header, and the PROXY header on telnet, are trusted on connections from localhost**,
+  because that's how `tailscale serve` delivers them. Anything else running on the machine can
+  send them too. On a machine other people
   log in to, or behind another reverse proxy that forwards visitors' headers, don't set `users`.
   lonoboard refuses to start with `users` set and `listen` beyond localhost or the tailnet.
 - **Memory:** before starting a model, lonoboard adds up its weight files (`-m`, `--mmproj`,

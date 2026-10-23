@@ -1,10 +1,15 @@
 """The telnet server: option negotiation (echo, suppress-go-ahead, window size, terminal type),
-UTF-8 or CP437 by terminal type, and a Session per connection."""
+UTF-8 or CP437 by terminal type, and a Session per connection.
+
+Behind `tailscale serve --proxy-protocol` every connection comes from this machine and starts with a PROXY
+header naming the real sender, so the board can ask Tailscale who they are (for [control])."""
+import ipaddress
 import socket
 import socketserver
 import threading
 import time
 
+from lonoboard import control
 from lonoboard.board.session import Session
 
 IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
@@ -14,6 +19,74 @@ UTF8_TERMS = ('xterm', 'screen', 'tmux', 'rxvt', 'alacritty', 'kitty', 'foot', '
               'putty', 'ghostty', 'konsole', 'gnome', 'iterm', 'st-', 'contour')
 # terminals known to do 24-bit colour; '*-256color' gets the 256-colour palette; others their own 16
 TRUECOLOR_TERMS = ('ghostty', 'kitty', 'alacritty', 'foot', 'wezterm', 'iterm', 'konsole', 'contour', 'direct', 'truecolor')
+PROXY_V1, PROXY_V2 = b'PROXY ', b'\r\n\r\n\x00\r\nQUIT\n'
+PROXY_V1_MAX = 107                    # the longest v1 header, by the spec
+PROXY_WAIT = 0.3                      # tailscale serve sends the header as soon as it connects
+
+
+def peek(sock, n, deadline, stop=None):
+    """Up to n bytes waiting on the socket, without taking them: fewer if no more come by the deadline,
+    or once `stop` has arrived."""
+    got = b''
+    while len(got) < n and not (stop and stop in got):
+        left = deadline - time.time()
+        if left <= 0:
+            break
+        sock.settimeout(left)
+        try:
+            more = sock.recv(n, socket.MSG_PEEK)
+        except socket.timeout:
+            break
+        if not more:
+            break
+        if len(more) == len(got):
+            time.sleep(0.01)                               # part of it is here: give the rest a moment
+        got = more
+    return got
+
+
+def take(sock, n):
+    got = b''
+    while len(got) < n:
+        more = sock.recv(n - len(got))
+        if not more:
+            raise ValueError('connection closed inside the PROXY header')
+        got += more
+    return got
+
+
+def read_proxy(sock, wait=PROXY_WAIT):
+    """The sender's address from a PROXY protocol header (v1 or v2) at the start of a connection.
+
+    None if the connection doesn't start with one (it's left untouched) or the header names no address.
+    ValueError if it starts like one but is broken."""
+    deadline = time.time() + wait
+    head = peek(sock, len(PROXY_V2), deadline)
+    if head.startswith(PROXY_V1):
+        line = peek(sock, PROXY_V1_MAX, deadline, stop=b'\r\n')
+        end = line.find(b'\r\n')
+        if end < 0:
+            raise ValueError('PROXY header too long')
+        parts = take(sock, end + 2)[:-2].split(b' ')
+        if len(parts) == 6 and parts[1] in (b'TCP4', b'TCP6'):
+            return str(ipaddress.ip_address(parts[2].decode('ascii')))
+        if parts[1:2] == [b'UNKNOWN']:
+            return None
+        raise ValueError('bad PROXY header')
+    if head == PROXY_V2:
+        fixed = take(sock, 16)
+        body = take(sock, int.from_bytes(fixed[14:16], 'big'))
+        if fixed[12] >> 4 != 2:
+            raise ValueError('bad PROXY header version')
+        if fixed[12] & 0x0f == 0:                          # LOCAL: a health check from the proxy itself
+            return None
+        family = fixed[13] >> 4
+        if family == 1 and len(body) >= 12:
+            return str(ipaddress.ip_address(body[:4]))
+        if family == 2 and len(body) >= 36:
+            return str(ipaddress.ip_address(body[:16]))
+        return None
+    return None
 
 
 class TelnetHandler(socketserver.BaseRequestHandler):
@@ -35,7 +108,13 @@ class TelnetHandler(socketserver.BaseRequestHandler):
 
     def handle(self):
         board = self.server.board
-        if board.full(self.client_address[0]):
+        ip = self.client_address[0]
+        if ipaddress.ip_address(ip).is_loopback:          # tailscale serve forwards from here
+            try:
+                ip = read_proxy(self.request) or ip
+            except (OSError, ValueError):
+                return
+        if board.full(ip):
             self.send(b'too many connections, try again later.\r\n')
             return
         self.send(bytes([IAC, WILL, ECHO, IAC, WILL, SGA, IAC, DO, NAWS, IAC, DO, TTYPE]))
@@ -53,7 +132,8 @@ class TelnetHandler(socketserver.BaseRequestHandler):
         tt = (self.ttype or '').lower()
         utf8 = any(t in tt for t in UTF8_TERMS)
         self.sess = Session(board, 'telnet', self.cols, self.rows, utf8=utf8, intro=board.intro)
-        self.sess.ip = self.client_address[0]
+        self.sess.ip = ip
+        self.sess.login = control.identity(ip, {})
         self.sess.colors = ('exact' if any(t in tt for t in TRUECOLOR_TERMS) else '256' if '256' in tt else 'theme') if utf8 else 'theme'
         if self.buf:
             self.sess.feed(self.decode(bytes(self.buf)))

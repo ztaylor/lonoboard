@@ -33,10 +33,11 @@ Off by default. With `[control] users` set, the logins listed can start, stop an
 services and change whether they start at boot, from the board or the API.
 
 - **Identity comes from Tailscale**: the `Tailscale-User-Login` header `tailscale serve` adds
-  (on connections from localhost), or `tailscale whois` for a board on a tailnet address. Tagged
-  devices and telnet sessions have no login, so they can't control anything.
+  (on connections from localhost), or `tailscale whois` for a board on a tailnet address and for
+  telnet through `tailscale serve --proxy-protocol`. Tagged devices, and telnet without the
+  PROXY header, have no login, so they can't control anything.
 - **Anything on the machine itself can claim a login**, by connecting to the board on localhost
-  with that header. Don't turn controls on where other people have accounts, or behind a reverse
+  with that header (or a telnet PROXY header). Don't turn controls on where other people have accounts, or behind a reverse
   proxy that passes visitors' headers through. lonoboard won't start with controls on and
   `listen` beyond localhost or the tailnet.
 - **Other web pages can't send controls in your name**: a control must be a JSON POST, and a

@@ -34,7 +34,7 @@ for h in "$@"; do
     systemctl --user restart lonoboard
     if command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
       tailscale serve --bg --http=7777 http://127.0.0.1:7777 >/dev/null
-      tailscale serve --bg --tcp=23 tcp://127.0.0.1:2323 >/dev/null
+      tailscale serve --bg --tcp=23 --proxy-protocol=1 tcp://127.0.0.1:2323 >/dev/null
     fi
     sleep 2
     curl -sf -m 5 localhost:7777/health'

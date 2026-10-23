@@ -209,7 +209,7 @@ class Session:
         self.mouse = False
         self.title = None
         self.ip = None
-        self.login = None                    # the viewer's Tailscale login (web sessions through tailscale serve)
+        self.login = None                    # the viewer's Tailscale login, when the board can tell (see control.py)
         self.notice = None                   # the last service control: {name, text, color, t, busy}
 
     # --- input ---

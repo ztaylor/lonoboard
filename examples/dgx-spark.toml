@@ -4,7 +4,7 @@
 # llama@NAME systemd user unit; lonoboard reads those, and auto-detection finds anything else.
 # Publish the board on the tailnet (lonoboard install prints these too):
 #   tailscale serve --bg --http=7777 http://127.0.0.1:7777
-#   tailscale serve --bg --tcp=23 tcp://127.0.0.1:2323        # then: telnet <spark>
+#   tailscale serve --bg --tcp=23 --proxy-protocol=1 tcp://127.0.0.1:2323        # then: telnet <spark>
 
 [board]
 tagline = "dgx spark"
